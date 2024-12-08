@@ -1,90 +1,103 @@
-// ClientSocket.cpp : 구현 파일입니다.
-//
-
 #include "stdafx.h"
 #include "SocketServer.h"
 #include "CClientSocket.h"
 #include "CListenSocket.h"
 #include "SocketServerDlg.h"
+#include <thread>
+#include <mutex>
+#include <sstream> 
 
+CSocketServerDlg* CSocketServerDlg::pMainInstance = nullptr;
 
-// CClientSocket
+std::mutex receiveMutex;
+
 int index = 0;
 CString alias[100][2];
 
-CClientSocket::CClientSocket()
-{
+CClientSocket::CClientSocket() : m_pListenSocket(nullptr) {}
+
+CClientSocket::~CClientSocket() {}
+
+// IsConnected() 메소드 정의
+bool CClientSocket::IsConnected() const {
+    return (m_hSocket != INVALID_SOCKET);
 }
 
-CClientSocket::~CClientSocket()
-{
-}
-
-
-// CClientSocket 멤버 함수
 void CClientSocket::SetListenSocket(CAsyncSocket* pSocket)
 {
-	m_pListenSocket = pSocket;
+    m_pListenSocket = pSocket;
 }
-// CClientSocket 멤버 함수
-
 
 void CClientSocket::OnClose(int nErrorCode)
 {
-	CSocket::OnClose(nErrorCode);
+    CSocket::OnClose(nErrorCode);
 
-	CListenSocket* pServerSocket = (CListenSocket*)m_pListenSocket;
-	pServerSocket->CloseClientSocket(this);
+    if (m_pListenSocket != nullptr) {
+        CListenSocket* pServerSocket = static_cast<CListenSocket*>(m_pListenSocket);
+        pServerSocket->CloseClientSocket(this);
+    }
 }
+
+#include <sstream>  // std::wstringstream 사용을 위해
 
 void CClientSocket::OnReceive(int nErrorCode)
 {
-	int i, check = 0;
-	CString strTmp = _T(""), strIPAddress = _T("");
-	UINT uPortNumber = 0;
-	TCHAR strBuffer[1024];
-	::ZeroMemory(strBuffer, sizeof(strBuffer));
+    std::thread receiveThread([this, nErrorCode]() {
+        std::lock_guard<std::mutex> lock(receiveMutex);
 
-	GetPeerName(strIPAddress, uPortNumber);
-	if (Receive(strBuffer, sizeof(strBuffer)) > 0) {
-		CSocketServerDlg* pMain = (CSocketServerDlg*)AfxGetMainWnd();
-		
-		CString portStr;
-		portStr.Format(L"%d", uPortNumber);
+        TCHAR szBuffer[1024] = { 0 };
+        int nRead = Receive(szBuffer, sizeof(szBuffer) - sizeof(TCHAR));
+        if (nRead > 0) {
+            szBuffer[nRead / sizeof(TCHAR)] = _T('\0');
 
-		for (i = index - 1; i >= 0; i--) {
-			if (portStr == alias[i][0]) {
-				strTmp.Format(_T("[%s]: %s"), alias[i][1], strBuffer);
-				break;
-			}
-		}
+            CString strIPAddress;
+            UINT uPortNumber = 0;
+            GetPeerName(strIPAddress, uPortNumber);
 
-		if (i == -1) {
-			strTmp.Format(_T("[%s:%d]: %s"), strIPAddress, uPortNumber, strBuffer);
-		}
+            CString clientKey;
+            clientKey.Format(_T("%s:%d"), strIPAddress, uPortNumber);
 
-		if (strTmp.Find(L"alias:") != -1) {
-			alias[index][0] = portStr;
-			CString temp = strBuffer;
-			temp.Delete(0, 6);
-			alias[index][1] = temp;
-			index++;
-			check = 1;
-		}
+            CString strTmp;
+            CListenSocket* pServerSocket = static_cast<CListenSocket*>(m_pListenSocket);
 
-		if (check == 0) {
-			int cnt = pMain->m_List.GetCount();
-			pMain->m_List.InsertString(cnt, strTmp);
+            if (CString(szBuffer).Find(L"alias:") != -1) {
+                // 별명 설정 처리
+                CString aliasName = szBuffer;
+                aliasName.Delete(0, 6); // 'alias:' 제거
 
-			CListenSocket* pServerSocket = (CListenSocket*)m_pListenSocket;
+                if (pServerSocket) {
+                    pServerSocket->aliasMap[clientKey] = aliasName; // 별명 저장
+                    pServerSocket->UpdateUI(); // UI 갱신
+                }
 
-			TCHAR *tChr = (TCHAR*)(LPCTSTR)strTmp;
-			pServerSocket->SendAllMessage(tChr);
-		}
-		else {
-			check = 0;
-		}
-	}
+                strTmp.Format(_T("[%s:%d] 별명이 '%s'로 설정되었습니다."), strIPAddress, uPortNumber, aliasName);
+            }
+            else {
+                // 별명이 있는 경우 별명 표시
+                if (pServerSocket && pServerSocket->aliasMap.find(clientKey) != pServerSocket->aliasMap.end()) {
+                    strTmp.Format(_T("[%s - %s]: %s"), strIPAddress, pServerSocket->aliasMap[clientKey], szBuffer);
+                }
+                else {
+                    // 별명이 없을 경우 기본 표시
+                    strTmp.Format(_T("[%s:%d]: %s"), strIPAddress, uPortNumber, szBuffer);
+                }
+            }
 
-	CSocket::OnReceive(nErrorCode);
+            // 메시지를 리스트박스에 추가
+            CSocketServerDlg* pMain = CSocketServerDlg::pMainInstance;
+            if (pMain && ::IsWindow(pMain->GetSafeHwnd())) {
+                CString* pMessage = new CString(strTmp);
+                pMain->PostMessage(WM_USER + 1, (WPARAM)pMessage);
+            }
+
+            // 다른 클라이언트로 메시지 브로드캐스트
+            if (pServerSocket) {
+                pServerSocket->SendAllClients(strTmp);
+            }
+        }
+
+        CSocket::OnReceive(nErrorCode);
+        });
+
+    receiveThread.detach();
 }

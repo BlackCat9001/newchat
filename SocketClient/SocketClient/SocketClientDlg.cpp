@@ -1,5 +1,4 @@
-﻿
-// SocketClientDlg.cpp: 구현 파일
+﻿// SocketClientDlg.cpp: 구현 파일
 //
 
 #include "stdafx.h"
@@ -7,6 +6,8 @@
 #include "SocketClientDlg.h"
 #include "CAlias.h"
 #include "afxdialogex.h"
+
+CSocketClientDlg* CSocketClientDlg::pMainInstance = nullptr;
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -20,12 +21,12 @@ class CAboutDlg : public CDialogEx
 public:
 	CAboutDlg();
 
-// 대화 상자 데이터입니다.
+	// 대화 상자 데이터입니다.
 #ifdef AFX_DESIGN_TIME
 	enum { IDD = IDD_ABOUTBOX };
 #endif
 
-	protected:
+protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV 지원입니다.
 
 // 구현입니다.
@@ -49,12 +50,16 @@ END_MESSAGE_MAP()
 // CSocketClientDlg 대화 상자
 
 
-
 CSocketClientDlg::CSocketClientDlg(CWnd* pParent /*=nullptr*/)
-	: CDialogEx(IDD_SOCKETCLIENT_DIALOG, pParent)
+	: CDialogEx(IDD_SOCKETCLIENT_DIALOG, pParent),
+	m_hIcon(nullptr), // m_hIcon 초기화
+	checknew(0),      // checknew 초기화
+	m_Socket()        // m_Socket 초기화
 {
+	pMainInstance = this;  // 생성자에서 정적 포인터 초기화
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
+
 
 void CSocketClientDlg::DoDataExchange(CDataExchange* pDX)
 {
@@ -69,13 +74,13 @@ BEGIN_MESSAGE_MAP(CSocketClientDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_BUTTON1, &CSocketClientDlg::OnBnClickedButton1)
 	ON_BN_CLICKED(IDC_BUTTON2, &CSocketClientDlg::OnBnClickedButton2)
 	ON_WM_TIMER()
+	ON_MESSAGE(WM_USER + 1, &CSocketClientDlg::OnAddMessageToList)  // 사용자 정의 메시지 핸들러 추가
 END_MESSAGE_MAP()
 
 
 // CSocketClientDlg 메시지 처리기
 
-BOOL CSocketClientDlg::OnInitDialog()
-{
+BOOL CSocketClientDlg::OnInitDialog() {
 	CDialogEx::OnInitDialog();
 
 	// 시스템 메뉴에 "정보..." 메뉴 항목을 추가합니다.
@@ -85,14 +90,12 @@ BOOL CSocketClientDlg::OnInitDialog()
 	ASSERT(IDM_ABOUTBOX < 0xF000);
 
 	CMenu* pSysMenu = GetSystemMenu(FALSE);
-	if (pSysMenu != nullptr)
-	{
+	if (pSysMenu != nullptr) {
 		BOOL bNameValid;
 		CString strAboutMenu;
 		bNameValid = strAboutMenu.LoadString(IDS_ABOUTBOX);
 		ASSERT(bNameValid);
-		if (!strAboutMenu.IsEmpty())
-		{
+		if (!strAboutMenu.IsEmpty()) {
 			pSysMenu->AppendMenu(MF_SEPARATOR);
 			pSysMenu->AppendMenu(MF_STRING, IDM_ABOUTBOX, strAboutMenu);
 		}
@@ -100,15 +103,21 @@ BOOL CSocketClientDlg::OnInitDialog()
 
 	// 이 대화 상자의 아이콘을 설정합니다.  응용 프로그램의 주 창이 대화 상자가 아닐 경우에는
 	//  프레임워크가 이 작업을 자동으로 수행합니다.
-	SetIcon(m_hIcon, TRUE);			// 큰 아이콘을 설정합니다.
-	SetIcon(m_hIcon, FALSE);		// 작은 아이콘을 설정합니다.
+	SetIcon(m_hIcon, TRUE);         // 큰 아이콘을 설정합니다.
+	SetIcon(m_hIcon, FALSE);        // 작은 아이콘을 설정합니다.
+
+	// 리스트박스 초기화 확인
+	if (!m_List.GetSafeHwnd()) {
+		AfxMessageBox(_T("Failed to initialize list box control."));
+		return FALSE;
+	}
 
 	GotoDlgCtrl(GetDlgItem(IDC_INPUT));
 
-	CButton *button1 = (CButton*)GetDlgItem(IDOK);
-	CButton *button2 = (CButton*)GetDlgItem(IDCANCEL);
-	button1->DestroyWindow();
-	button2->DestroyWindow();
+	CButton* button1 = (CButton*)GetDlgItem(IDOK);
+	CButton* button2 = (CButton*)GetDlgItem(IDCANCEL);
+	if (button1) button1->DestroyWindow();
+	if (button2) button2->DestroyWindow();
 
 	SetTimer(1, 100, NULL);
 	m_Socket.Create();
@@ -118,13 +127,11 @@ BOOL CSocketClientDlg::OnInitDialog()
 		return FALSE;
 	}
 
-	CAlias dialog1 = new CAlias();
+	CAlias dialog1;
 	dialog1.DoModal();
-	// TODO: 여기에 추가 초기화 작업을 추가합니다.
-	
-	return FALSE;  // 포커스를 컨트롤에 설정하지 않으면 TRUE를 반환합니다.
-}
 
+	return TRUE;  // 포커스를 컨트롤에 설정하지 않으면 TRUE를 반환합니다.
+}
 void CSocketClientDlg::OnSysCommand(UINT nID, LPARAM lParam)
 {
 	if ((nID & 0xFFF0) == IDM_ABOUTBOX)
@@ -175,7 +182,6 @@ HCURSOR CSocketClientDlg::OnQueryDragIcon()
 }
 
 
-
 void CSocketClientDlg::OnBnClickedButton1()
 {
 	checknew = 0;
@@ -183,7 +189,7 @@ void CSocketClientDlg::OnBnClickedButton1()
 
 	UpdateData(TRUE);
 	GetDlgItemText(IDC_INPUT, str);
-	m_Socket.Send((LPVOID)(LPCTSTR)str, str.GetLength() * 2);
+	m_Socket.Send((LPVOID)(LPCTSTR)str, (str.GetLength() + 1) * sizeof(TCHAR)); // 수정: 문자열 길이에 널 문자 포함
 	str.Format(_T(""));
 	SetDlgItemText(IDC_INPUT, str);
 	UpdateData(FALSE);
@@ -193,7 +199,7 @@ void CSocketClientDlg::OnBnClickedButton1()
 
 void CSocketClientDlg::OnBnClickedButton2()
 {
-	CAlias dialog1 = new CAlias();
+	CAlias dialog1;
 	dialog1.DoModal();
 	// TODO: 여기에 컨트롤 알림 처리기 코드를 추가합니다.
 }
@@ -224,4 +230,16 @@ BOOL CSocketClientDlg::PreTranslateMessage(MSG* pMsg)
 		}
 	}
 	return CDialogEx::PreTranslateMessage(pMsg);
+}
+
+LRESULT CSocketClientDlg::OnAddMessageToList(WPARAM wParam, LPARAM lParam) {
+	CString* pMessage = (CString*)wParam;
+	if (pMessage) {
+		int cnt = m_List.GetCount();
+		m_List.InsertString(cnt, *pMessage);  // 리스트박스에 메시지 추가
+		m_List.SetCurSel(cnt); // 수정: 새로 추가된 메시지를 선택하여 보이도록 함
+		delete pMessage;
+		checknew = 1; // 스크롤을 아래로 이동시키기 위해 체크 설정
+	}
+	return 0;
 }

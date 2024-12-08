@@ -8,6 +8,8 @@
 #include "CClientSocket.h"
 #include "afxdialogex.h"
 
+
+
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #endif
@@ -19,6 +21,7 @@ class CAboutDlg : public CDialogEx
 {
 public:
 	CAboutDlg();
+
 
 // 대화 상자 데이터입니다.
 #ifdef AFX_DESIGN_TIME
@@ -51,9 +54,10 @@ END_MESSAGE_MAP()
 
 
 CSocketServerDlg::CSocketServerDlg(CWnd* pParent /*=nullptr*/)
-	: CDialogEx(IDD_SOCKETSERVER_DIALOG, pParent)
+	: CDialogEx(IDD_SOCKETSERVER_DIALOG, pParent), clientList(nullptr)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
+	pMainInstance = this;
 }
 
 void CSocketServerDlg::DoDataExchange(CDataExchange* pDX)
@@ -67,54 +71,47 @@ BEGIN_MESSAGE_MAP(CSocketServerDlg, CDialogEx)
 	ON_WM_PAINT()
 	ON_WM_QUERYDRAGICON()
 	ON_WM_DESTROY()
+	ON_MESSAGE(WM_USER + 1, &CSocketServerDlg::OnAddMessageToList)  // 사용자 정의 메시지 핸들러 추가
 END_MESSAGE_MAP()
+
 
 
 // CSocketServerDlg 메시지 처리기
 
-BOOL CSocketServerDlg::OnInitDialog()
-{
+BOOL CSocketServerDlg::OnInitDialog() {
 	CDialogEx::OnInitDialog();
 
-	// 시스템 메뉴에 "정보..." 메뉴 항목을 추가합니다.
-
-	// IDM_ABOUTBOX는 시스템 명령 범위에 있어야 합니다.
-	ASSERT((IDM_ABOUTBOX & 0xFFF0) == IDM_ABOUTBOX);
-	ASSERT(IDM_ABOUTBOX < 0xF000);
-
-	CMenu* pSysMenu = GetSystemMenu(FALSE);
-	if (pSysMenu != nullptr)
-	{
-		BOOL bNameValid;
-		CString strAboutMenu;
-		bNameValid = strAboutMenu.LoadString(IDS_ABOUTBOX);
-		ASSERT(bNameValid);
-		if (!strAboutMenu.IsEmpty())
-		{
-			pSysMenu->AppendMenu(MF_SEPARATOR);
-			pSysMenu->AppendMenu(MF_STRING, IDM_ABOUTBOX, strAboutMenu);
-		}
+	if (!dbManager.openDatabase("ChatDatabase.db")) {
+		AfxMessageBox(_T("Failed to open or create database!"));
+		return FALSE;
 	}
 
-	// 이 대화 상자의 아이콘을 설정합니다.  응용 프로그램의 주 창이 대화 상자가 아닐 경우에는
-	//  프레임워크가 이 작업을 자동으로 수행합니다.
-	SetIcon(m_hIcon, TRUE);			// 큰 아이콘을 설정합니다.
-	SetIcon(m_hIcon, FALSE);		// 작은 아이콘을 설정합니다.
+	// 시스템 메뉴 설정...
+
+	SetIcon(m_hIcon, TRUE);
+	SetIcon(m_hIcon, FALSE);
+
+	// 리스트 박스 초기화 확인
+	if (!m_List.GetSafeHwnd()) {
+		AfxMessageBox(_T("Failed to initialize list box control."));
+		return FALSE;
+	}
 
 	clientList = (CListBox*)GetDlgItem(IDC_CLIENT_LIST);
 
-	if (m_ListenSocket.Create(21000, SOCK_STREAM)) { // 소켓생성
+	if (m_ListenSocket.Create(21000, SOCK_STREAM)) {
 		if (!m_ListenSocket.Listen()) {
-			AfxMessageBox(_T("ERROR:Listen() return False"));
+			AfxMessageBox(_T("ERROR: Listen() return False"));
 		}
 	}
 	else {
-		AfxMessageBox(_T("ERROR:Failed to create server socket!"));
+		AfxMessageBox(_T("ERROR: Failed to create server socket!"));
 	}
-	// TODO: 여기에 추가 초기화 작업을 추가합니다.
 
-	return TRUE;  // 포커스를 컨트롤에 설정하지 않으면 TRUE를 반환합니다.
+	return TRUE;
 }
+
+
 
 void CSocketServerDlg::OnSysCommand(UINT nID, LPARAM lParam)
 {
@@ -170,21 +167,36 @@ void CSocketServerDlg::OnDestroy()
 {
 	CDialogEx::OnDestroy();
 
-	POSITION pos;
+	pMainInstance = nullptr;  // 대화 상자가 파괴될 때 정적 포인터를 null로 설정
 
-	pos = m_ListenSocket.m_ptrClientSocketList.GetHeadPosition();
-	CClientSocket* pClient = NULL;
-
-	while (pos != NULL) {
-		pClient = (CClientSocket*)m_ListenSocket.m_ptrClientSocketList.GetNext(pos);
-		if (pClient != NULL) {
-			pClient->ShutDown();
-			pClient->Close();
-
-			delete pClient;
+	// 클라이언트 소켓 리스트를 반복하여 모든 클라이언트 연결 종료
+	for (auto client : m_ListenSocket.m_ClientList) {
+		if (client) {
+			client->ShutDown();
+			client->Close();
+			delete client;
 		}
 	}
+	m_ListenSocket.m_ClientList.clear();  // 리스트를 비워줍니다.
+
 	m_ListenSocket.ShutDown();
 	m_ListenSocket.Close();
-	// TODO: 여기에 메시지 처리기 코드를 추가합니다.
 }
+
+LRESULT CSocketServerDlg::OnAddMessageToList(WPARAM wParam, LPARAM lParam) {
+	CString* pMessage = (CString*)wParam;
+
+	// 메시지를 리스트 박스에 추가
+	int cnt = m_List.GetCount();
+	m_List.InsertString(cnt, *pMessage);
+
+	// 메시지를 데이터베이스에 저장
+	std::string message = CT2A(*pMessage);
+	if (!dbManager.saveMessage(message)) {
+		AfxMessageBox(_T("Failed to save message to database."));
+	}
+
+	delete pMessage;
+	return 0;
+}
+

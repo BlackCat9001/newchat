@@ -1,87 +1,109 @@
 #include "stdafx.h"
-#include "SocketServer.h"
 #include "CListenSocket.h"
 #include "CClientSocket.h"
 #include "SocketServerDlg.h"
+#include <mutex> // 멀티스레드 보호를 위해 mutex 사용
+#include <thread>
 
-CListenSocket::CListenSocket()
-{
+std::mutex clientListMutex;
+
+CListenSocket::CListenSocket() {}
+
+CListenSocket::~CListenSocket() {
+    // 모든 클라이언트 소켓 삭제
+    std::lock_guard<std::mutex> lock(clientListMutex);  // 클라이언트 리스트 접근 보호
+
+    for (auto client : m_ClientList) {
+        if (client) {
+            client->ShutDown();
+            client->Close();
+            delete client;
+        }
+    }
+    m_ClientList.clear();
 }
 
-CListenSocket::~CListenSocket()
-{
+void CListenSocket::OnAccept(int nErrorCode) {
+    CClientSocket* pClient = new CClientSocket();
+    if (Accept(*pClient)) {
+        pClient->SetListenSocket(this);
+
+        {
+            std::lock_guard<std::mutex> lock(clientListMutex);
+            m_ClientList.push_back(pClient);
+        }
+
+        // 클라이언트 IP와 포트를 사용자 목록에 추가
+        CString strIPAddress;
+        UINT uPortNumber = 0;
+        pClient->GetPeerName(strIPAddress, uPortNumber);
+
+        CString clientInfo;
+        clientInfo.Format(_T("%s:%d"), strIPAddress, uPortNumber);
+
+        // 메인 다이얼로그에 사용자 추가
+        if (CSocketServerDlg::pMainInstance && ::IsWindow(CSocketServerDlg::pMainInstance->GetSafeHwnd())) {
+            CSocketServerDlg::pMainInstance->clientList->AddString(clientInfo);
+        }
+    }
+    else {
+        delete pClient;
+    }
+
+    CAsyncSocket::OnAccept(nErrorCode);
 }
 
-void CListenSocket::OnAccept(int nErrorCode)
-{
-	CClientSocket* pClient = new CClientSocket;
-	CString str;
 
-	if (Accept(*pClient)) {
-		pClient->SetListenSocket(this);
-		m_ptrClientSocketList.AddTail(pClient);
+void CListenSocket::SendAllClients(const CString& message) {
+    for (auto client : m_ClientList) {
+        if (client && client->IsConnected()) {
+            
+            std::thread sendThread([client, message]() {
+                client->Send((LPCTSTR)message, message.GetLength() * sizeof(TCHAR));
+                });
 
-		CSocketServerDlg* pMain = (CSocketServerDlg*)AfxGetMainWnd();
-		str.Format(_T("Client (%d)"), (int)m_ptrClientSocketList.Find(pClient));
-		pMain->clientList->AddString(str);
-
-	}
-	else {
-		delete pClient;
-		AfxMessageBox(_T("ERROR : Failed can't accept new Client!"));
-	}
-
-	CAsyncSocket::OnAccept(nErrorCode);
+            
+            sendThread.detach();
+        }
+    }
 }
 
-void CListenSocket::CloseClientSocket(CSocket* pClient)
-{
-	POSITION pos;
-	pos = m_ptrClientSocketList.Find(pClient);
+void CListenSocket::CloseClientSocket(CClientSocket* pClient) {
+    std::lock_guard<std::mutex> lock(clientListMutex);  // 클라이언트 리스트 접근 보호
 
-	if (pos != NULL) {
-		if (pClient != NULL) {
-			pClient->ShutDown();
-			pClient->Close();
-		}
-
-		CSocketServerDlg* pMain = (CSocketServerDlg*)AfxGetMainWnd();
-		CString str1, str2;
-		UINT indx = 0, posNum;
-		pMain->clientList->SetCurSel(0);
-
-		while (indx < pMain->clientList->GetCount()) {
-			posNum = (int)m_ptrClientSocketList.Find(pClient);
-			pMain->clientList->GetText(indx, str1);
-			str2.Format(_T("%d"), posNum);
-
-			if (str1.Find(str2) != -1) {
-				AfxMessageBox(str1 + str2);
-				pMain->clientList->DeleteString(indx);
-				break;
-			}
-			indx++;
-		}
-
-		m_ptrClientSocketList.RemoveAt(pos);
-		delete pClient;
-	}
+    m_ClientList.remove(pClient);
+    if (pClient) {
+        pClient->ShutDown();
+        pClient->Close();
+        delete pClient;
+    }
 }
 
-void CListenSocket::SendAllMessage(TCHAR* pszMessage)
+void CListenSocket::UpdateUI()
 {
-	POSITION pos;
-	pos = m_ptrClientSocketList.GetHeadPosition();
-	CClientSocket* pClient = NULL;
+    if (CSocketServerDlg::pMainInstance && ::IsWindow(CSocketServerDlg::pMainInstance->GetSafeHwnd())) {
+        CSocketServerDlg::pMainInstance->clientList->ResetContent(); // 기존 목록 초기화
 
-	while (pos != NULL) {
-		pClient = (CClientSocket*)m_ptrClientSocketList.GetNext(pos);
-		if (pClient != NULL) {
+        for (const auto& client : m_ClientList) {
+            CString strIPAddress;
+            UINT uPortNumber = 0;
+            client->GetPeerName(strIPAddress, uPortNumber);
 
-			int checkLenOfData = pClient->Send(pszMessage, lstrlen(pszMessage) * 2);
-			if (checkLenOfData != lstrlen(pszMessage) * 2) {
-				AfxMessageBox(_T("일부 데이터가 정상적으로 전송되지 못했습니다!"));
-			}
-		}
-	}
+            CString clientKey;
+            clientKey.Format(_T("%s:%d"), strIPAddress, uPortNumber);
+
+            CString displayText;
+            if (aliasMap.find(clientKey) != aliasMap.end()) {
+                // 별명이 있는 경우 별명 표시
+                displayText.Format(_T("[%s - %s]"), strIPAddress, aliasMap[clientKey]);
+            }
+            else {
+                // 별명이 없을 경우 기본 IP:Port로 표시
+                displayText.Format(_T("[%s:%d]"), strIPAddress, uPortNumber);
+            }
+
+            CSocketServerDlg::pMainInstance->clientList->AddString(displayText);
+        }
+    }
 }
+

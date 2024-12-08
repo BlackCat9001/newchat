@@ -1,7 +1,9 @@
 ﻿#pragma once
 #include "CListenSocket.h"
 #include "afxwin.h"
+#include "DatabaseManager.h"
 
+#define IDD_SOCKETSERVER_DIALOG 102
 // CSocketServerDlg 대화 상자
 class CSocketServerDlg : public CDialogEx
 {
@@ -12,6 +14,8 @@ public:
 	CListBox* clientList;
 	// 대화 상자 데이터입니다.
 	enum { IDD = IDD_SOCKETSERVER_DIALOG };
+
+	DatabaseManager dbManager;  // SQLite 데이터베이스 관리자
 
 protected:
 	virtual void DoDataExchange(CDataExchange* pDX);	// DDX/DDV 지원입니다.
@@ -27,7 +31,10 @@ protected:
 	afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
 	afx_msg void OnPaint();
 	afx_msg HCURSOR OnQueryDragIcon();
+	
 	DECLARE_MESSAGE_MAP()
 public:
 	CListBox m_List;
+	static CSocketServerDlg* pMainInstance;  // 정적 포인터 선언
+	afx_msg LRESULT OnAddMessageToList(WPARAM wParam, LPARAM lParam);
 };

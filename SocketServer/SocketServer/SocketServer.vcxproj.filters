@@ -36,6 +36,12 @@
     <ClInclude Include="CClientSocket.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\..\..\..\..\..\..\..\..\.SQLite3\sqlite-autoconf-3470000\sqlite3.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="DatabaseManager.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="SocketServer.cpp">
@@ -51,6 +57,9 @@
       <Filter>소스 파일</Filter>
     </ClCompile>
     <ClCompile Include="CClientSocket.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="DatabaseManager.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
   </ItemGroup>

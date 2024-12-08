@@ -41,4 +41,6 @@ public:
 	int checknew;
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
 	virtual BOOL PreTranslateMessage(MSG* pMsg);
+	static CSocketClientDlg* pMainInstance;
+	afx_msg LRESULT OnAddMessageToList(WPARAM wParam, LPARAM lParam);
 };
